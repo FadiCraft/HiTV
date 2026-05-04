@@ -3,7 +3,9 @@ const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
 
-// دالة تحويل الترجمة
+// الرابط الأساسي للمستودع الخاص بك
+const GITHUB_BASE_URL = "https://raw.githubusercontent.com/FadiCraft/HiTV/refs/heads/main/subtitles/";
+
 async function downloadAndConvertSub(url, title, epNum) {
     if (!url) return null;
     try {
@@ -21,12 +23,18 @@ async function downloadAndConvertSub(url, title, epNum) {
                 index++;
             }
         }
-        const fileName = `${title.replace(/[/\\?%*:|"<>]/g, '-')}_E${epNum}.srt`;
+        
+        // تنظيف الاسم ليكون متوافقاً مع روابط الـ URL
+        const safeTitle = title.replace(/[/\\?%*:|"<> ]/g, '-');
+        const fileName = `${safeTitle}_E${epNum}.srt`;
         const dir = './subtitles';
+        
         if (!fs.existsSync(dir)) fs.mkdirSync(dir);
         const filePath = path.join(dir, fileName);
         fs.writeFileSync(filePath, srtContent);
-        return filePath;
+        
+        // إرجاع الرابط الكامل بدلاً من المسار المحلي
+        return GITHUB_BASE_URL + fileName;
     } catch (e) { return null; }
 }
 
@@ -63,7 +71,7 @@ async function startScraping() {
 
     for (let movie of movies) {
         if (!movie.url) continue;
-        console.log(`🎬 جاري معالجة المسلسل: ${movie.title}`);
+        console.log(`🎬 جاري معالجة: ${movie.title}`);
         
         let movieData = {
             title: movie.title,
@@ -72,7 +80,6 @@ async function startScraping() {
         };
 
         try {
-            // أولاً: نعرف عدد الحلقات
             await page.goto(movie.url, { waitUntil: 'networkidle0' });
             const episodes = await page.evaluate(() => {
                 const seen = new Set();
@@ -81,14 +88,10 @@ async function startScraping() {
                     .filter(txt => txt && !isNaN(txt) && !seen.has(txt) && seen.add(txt));
             });
 
-            console.log(`📌 تم العثور على ${episodes.length} حلقة.`);
-
-            // ثانياً: نمر على كل حلقة كأنها زيارة جديدة
             for (let i = 1; i <= episodes.length; i++) {
                 let foundM3u8 = "";
                 let foundSub = "";
 
-                // تفعيل التنصت
                 await page.setRequestInterception(true);
                 const listener = (request) => {
                     const url = request.url();
@@ -98,31 +101,27 @@ async function startScraping() {
                 };
                 page.on('request', listener);
 
-                // الانتقال للحلقة المحددة عبر إضافة query parameter للرابط (إذا كان الموقع يدعمها)
-                // أو النقر والانتظار
                 await page.goto(movie.url, { waitUntil: 'networkidle0' });
                 await page.evaluate((num) => {
                     const btn = Array.from(document.querySelectorAll('.play-item')).find(el => el.innerText.trim() == num);
                     if (btn) btn.click();
                 }, i);
 
-                // ننتظر التحميل والـ Network
                 await new Promise(r => setTimeout(r, 8000));
 
                 movieData[`m3u8_epc${i}`] = foundM3u8;
-                const srtPath = await downloadAndConvertSub(foundSub, movie.title, i);
-                movieData[`srt_epc${i}`] = srtPath || "";
+                // هنا سيتم تخزين الرابط الكامل مباشرة
+                movieData[`srt_epc${i}`] = await downloadAndConvertSub(foundSub, movie.title, i) || "";
 
-                console.log(`   ✅ الحلقة ${i}: ${foundM3u8 ? 'تم جلب الرابط' : 'لم يتم العثور'}`);
+                console.log(`   ✅ Episode ${i} Done`);
 
-                // إغلاق التنصت لهذه الحلقة
                 await page.setRequestInterception(false);
                 page.off('request', listener);
             }
 
             results.push(movieData);
         } catch (err) {
-            console.log(`❌ خطأ في ${movie.title}: ${err.message}`);
+            console.log(`❌ Error: ${err.message}`);
         }
     }
 
