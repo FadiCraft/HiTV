@@ -3,6 +3,7 @@ const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
 
+// دالة تحويل الترجمة
 async function downloadAndConvertSub(url, title) {
     if (!url) return null;
     try {
@@ -38,65 +39,53 @@ function formatTime(seconds) {
     return `${hh}:${mm}:${ss},${ms}`;
 }
 
-async function autoScroll(page) {
-    await page.evaluate(async () => {
-        await new Promise((resolve) => {
-            let totalHeight = 0;
-            let distance = 200;
-            let timer = setInterval(() => {
-                let scrollHeight = document.body.scrollHeight;
-                window.scrollBy(0, distance);
-                totalHeight += distance;
-                if (totalHeight >= scrollHeight || totalHeight > 5000) { // توقف بعد مسافة معينة لتجنب اللانهائية
-                    clearInterval(timer);
-                    resolve();
-                }
-            }, 150);
-        });
-    });
-}
-
 async function startScraping() {
     const browser = await puppeteer.launch({ 
         headless: "new", 
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'] 
     });
     const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 1000 });
+    await page.setViewport({ width: 1920, height: 1080 });
     
     const albumUrl = 'https://home.hitv.vip/ar-ae/gallery';
     console.log("🚀 جاري الدخول إلى المعرض...");
 
     try {
-        await page.goto(albumUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-        
-        // التمرير لتحميل محتوى الـ Lazy Load
-        await autoScroll(page);
-        await new Promise(r => setTimeout(r, 3000));
+        // ننتظر حتى استقرار الشبكة تماماً
+        await page.goto(albumUrl, { waitUntil: 'networkidle0', timeout: 90000 });
+
+        // انتظار قسري لأي عنصر يحمل رابط مسلسل
+        console.log("⏳ بانتظار ظهور المسلسلات في الصفحة...");
+        try {
+            await page.waitForSelector('a[href*="/series/"]', { timeout: 30000 });
+        } catch (e) {
+            console.log("⚠️ تحذير: لم يتم العثور على المحدد الرئيسي، سأحاول الاستخراج المباشر.");
+        }
 
         const seriesList = await page.evaluate(() => {
-            // استهداف wrapper المسلسل
-            const wrappers = Array.from(document.querySelectorAll('.series-wrapper'));
-            return wrappers.map(el => {
-                const link = el.querySelector('a');
-                // استخراج العنوان من aria-label لأنه الأدق في الهيكل الذي أرسلته
-                const title = el.querySelector('[aria-label]')?.getAttribute('aria-label') || link?.getAttribute('title') || "No Title";
-                const img = el.querySelector('img.van-image__img');
+            // سنبحث عن أي رابط يحتوي على كلمة series
+            const anchors = Array.from(document.querySelectorAll('a[href*="/series/"]'));
+            
+            return anchors.map(a => {
+                const wrapper = a.closest('.series-wrapper') || a.parentElement;
+                const img = wrapper.querySelector('img');
+                const title = a.getAttribute('title') || a.querySelector('[aria-label]')?.getAttribute('aria-label') || a.innerText;
                 
                 return {
-                    title: title.trim(),
-                    url: link?.href || '',
-                    // تفضيل data-src لأن src قد يكون base64 مؤقت
-                    image: img?.getAttribute('data-src') || img?.src || ''
+                    title: title ? title.trim() : "No Title",
+                    url: a.href,
+                    image: img ? (img.getAttribute('data-src') || img.src) : ""
                 };
-            }).filter(item => item.url && item.url.includes('/series/'));
+            }).filter((v, i, a) => a.findIndex(t => t.url === v.url) === i); // حذف الروابط المكررة
         });
 
         console.log(`🔍 تم العثور على ${seriesList.length} عمل.`);
         const results = [];
 
         for (let item of seriesList) {
-            console.log(`🎬 جاري فحص: ${item.title}`);
+            if (!item.url) continue;
+            console.log(`🎬 معالجة: ${item.title}`);
+            
             let foundM3u8 = "";
             let foundSub = "";
 
@@ -110,9 +99,8 @@ async function startScraping() {
             page.on('request', listener);
 
             try {
-                await page.goto(item.url, { waitUntil: 'networkidle0', timeout: 60000 });
-                // ننتظر قليلاً لضمان أن المشغل طلب الروابط
-                await new Promise(r => setTimeout(r, 12000));
+                await page.goto(item.url, { waitUntil: 'networkidle2', timeout: 45000 });
+                await new Promise(r => setTimeout(r, 10000));
 
                 const srtPath = await downloadAndConvertSub(foundSub, item.title);
                 results.push({
@@ -121,9 +109,9 @@ async function startScraping() {
                     video_url: foundM3u8,
                     subtitle_path: srtPath || ""
                 });
-                console.log(`   ✅ تم بنجاح.`);
+                console.log(`   ✅ تم.`);
             } catch (err) {
-                console.log(`   ❌ خطأ في ${item.title}: ${err.message}`);
+                console.log(`   ❌ خطأ في ${item.title}`);
             } finally {
                 page.off('request', listener);
                 await page.setRequestInterception(false);
@@ -131,10 +119,10 @@ async function startScraping() {
         }
 
         fs.writeFileSync('series_data.json', JSON.stringify(results, null, 2));
-        console.log("🏁 انتهى الاستخراج.");
+        console.log("🏁 انتهى العمل.");
 
     } catch (e) {
-        console.log("❌ خطأ عام: " + e.message);
+        console.log("❌ خطأ: " + e.message);
     }
 
     await browser.close();
