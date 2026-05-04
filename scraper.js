@@ -73,42 +73,52 @@ async function startScraping() {
         try {
             await page.goto(movie.url, { waitUntil: 'networkidle0', timeout: 60000 });
 
-            // استخراج عدد الحلقات (العناصر القابلة للضغط)
-            const episodeCount = await page.evaluate(() => {
-                return document.querySelectorAll('.play-item').length;
+            // اختيار الحلقات الفريدة فقط بناءً على رقم الحلقة الظاهر
+            const episodes = await page.evaluate(() => {
+                const allItems = Array.from(document.querySelectorAll('.play-item'));
+                const uniqueEps = [];
+                const seenNumbers = new Set();
+
+                allItems.forEach(item => {
+                    const text = item.innerText.trim();
+                    // نتحقق أن النص رقم وأننا لم نضفه من قبل
+                    if (text && !isNaN(text) && !seenNumbers.has(text)) {
+                        seenNumbers.add(text);
+                        uniqueEps.push(text);
+                    }
+                });
+                return uniqueEps;
             });
 
-            console.log(`Found ${episodeCount} episodes for ${movie.title}`);
+            const episodeCount = episodes.length;
+            console.log(`Verified: ${episodeCount} unique episodes for ${movie.title}`);
 
             for (let i = 1; i <= episodeCount; i++) {
                 let currentM3u8 = "";
                 let currentSub = "";
 
-                // التنصت لالتقاط روابط الحلقة الحالية فقط
+                await page.setRequestInterception(true);
                 const intercept = (request) => {
                     const url = request.url();
                     if (url.includes('.m3u8')) currentM3u8 = url;
                     if (url.includes('.xml') && url.includes('subtitle')) currentSub = url;
+                    request.continue();
                 };
+                page.on('request', intercept);
 
-                await page.setRequestInterception(true);
-                page.on('request', request => { intercept(request); request.continue(); });
-
-                // النقر على الحلقة رقم i
-                await page.evaluate((idx) => {
-                    const eps = document.querySelectorAll('.play-item');
-                    if (eps[idx - 1]) eps[idx - 1].click();
+                // النقر على الحلقة رقم i (بناءً على النص الظاهر للحلقة لضمان الدقة)
+                await page.evaluate((num) => {
+                    const eps = Array.from(document.querySelectorAll('.play-item'));
+                    const target = eps.find(el => el.innerText.trim() == num);
+                    if (target) target.click();
                 }, i);
 
-                // انتظار تحميل بيانات الحلقة
                 await new Promise(r => setTimeout(r, 6000));
 
-                // تخزين البيانات بالشكل الذي طلبته للسكتشوير
                 movieData[`m3u8_epc${i}`] = currentM3u8;
                 const srtLocalPath = await downloadAndConvertSub(currentSub, movie.title, i);
                 movieData[`srt_epc${i}`] = srtLocalPath || "";
 
-                // تنظيف المستمعين للحلقة القادمة
                 await page.setRequestInterception(false);
                 page.removeAllListeners('request');
                 
@@ -122,7 +132,7 @@ async function startScraping() {
     }
 
     fs.writeFileSync('movies.json', JSON.stringify(results, null, 2));
-    console.log("Scraping Completed. JSON saved for Sketchware.");
+    console.log("Scraping Completed. Data cleaned from duplicates.");
     await browser.close();
 }
 
