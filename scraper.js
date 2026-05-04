@@ -3,11 +3,10 @@ const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
 
-// دالة تحويل الترجمة
-async function downloadAndConvertSub(url, title) {
+async function downloadAndConvertSub(url, title, epNum) {
     if (!url) return null;
     try {
-        const response = await axios.get(url, { timeout: 10000 });
+        const response = await axios.get(url);
         const xmlData = response.data;
         let srtContent = '';
         let index = 1;
@@ -21,13 +20,13 @@ async function downloadAndConvertSub(url, title) {
                 index++;
             }
         }
-        const fileName = `${title.replace(/[/\\?%*:|"<>]/g, '-')}.srt`;
+        const fileName = `${title.replace(/[/\\?%*:|"<>]/g, '-')}_E${epNum}.srt`;
         const dir = './subtitles';
         if (!fs.existsSync(dir)) fs.mkdirSync(dir);
         const filePath = path.join(dir, fileName);
         fs.writeFileSync(filePath, srtContent);
         return filePath;
-    } catch (e) { return null; }
+    } catch (error) { return null; }
 }
 
 function formatTime(seconds) {
@@ -45,86 +44,95 @@ async function startScraping() {
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'] 
     });
     const page = await browser.newPage();
-    await page.setViewport({ width: 1920, height: 1080 });
-    
-    const albumUrl = 'https://home.hitv.vip/ar-ae/gallery';
-    console.log("🚀 جاري الدخول إلى المعرض...");
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    try {
-        // ننتظر حتى استقرار الشبكة تماماً
-        await page.goto(albumUrl, { waitUntil: 'networkidle0', timeout: 90000 });
+    const albumUrl = 'https://home.hitv.vip/ar-ae/album/a_MT4IPBbd_619kbg8HYh1g';
+    await page.goto(albumUrl, { waitUntil: 'networkidle2' });
 
-        // انتظار قسري لأي عنصر يحمل رابط مسلسل
-        console.log("⏳ بانتظار ظهور المسلسلات في الصفحة...");
+    const movies = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('.album')).map(el => ({
+            title: el.querySelector('a')?.getAttribute('title') || 'NoTitle',
+            url: el.querySelector('a')?.href || '',
+            image: el.querySelector('img')?.getAttribute('data-src') || el.querySelector('img')?.src || ''
+        }));
+    });
+
+    const results = [];
+
+    for (let movie of movies) {
+        if (!movie.url) continue;
+        console.log(`Processing Series: ${movie.title}`);
+        
+        let movieData = {
+            title: movie.title,
+            image: movie.image,
+            original_url: movie.url
+        };
+
         try {
-            await page.waitForSelector('a[href*="/series/"]', { timeout: 30000 });
-        } catch (e) {
-            console.log("⚠️ تحذير: لم يتم العثور على المحدد الرئيسي، سأحاول الاستخراج المباشر.");
-        }
+            await page.goto(movie.url, { waitUntil: 'networkidle0', timeout: 60000 });
 
-        const seriesList = await page.evaluate(() => {
-            // سنبحث عن أي رابط يحتوي على كلمة series
-            const anchors = Array.from(document.querySelectorAll('a[href*="/series/"]'));
-            
-            return anchors.map(a => {
-                const wrapper = a.closest('.series-wrapper') || a.parentElement;
-                const img = wrapper.querySelector('img');
-                const title = a.getAttribute('title') || a.querySelector('[aria-label]')?.getAttribute('aria-label') || a.innerText;
-                
-                return {
-                    title: title ? title.trim() : "No Title",
-                    url: a.href,
-                    image: img ? (img.getAttribute('data-src') || img.src) : ""
-                };
-            }).filter((v, i, a) => a.findIndex(t => t.url === v.url) === i); // حذف الروابط المكررة
-        });
+            // اختيار الحلقات الفريدة فقط بناءً على رقم الحلقة الظاهر
+            const episodes = await page.evaluate(() => {
+                const allItems = Array.from(document.querySelectorAll('.play-item'));
+                const uniqueEps = [];
+                const seenNumbers = new Set();
 
-        console.log(`🔍 تم العثور على ${seriesList.length} عمل.`);
-        const results = [];
-
-        for (let item of seriesList) {
-            if (!item.url) continue;
-            console.log(`🎬 معالجة: ${item.title}`);
-            
-            let foundM3u8 = "";
-            let foundSub = "";
-
-            await page.setRequestInterception(true);
-            const listener = (req) => {
-                const url = req.url();
-                if (url.includes('.m3u8')) foundM3u8 = url;
-                if (url.includes('.xml') && url.includes('subtitle')) foundSub = url;
-                req.continue();
-            };
-            page.on('request', listener);
-
-            try {
-                await page.goto(item.url, { waitUntil: 'networkidle2', timeout: 45000 });
-                await new Promise(r => setTimeout(r, 10000));
-
-                const srtPath = await downloadAndConvertSub(foundSub, item.title);
-                results.push({
-                    title: item.title,
-                    image: item.image,
-                    video_url: foundM3u8,
-                    subtitle_path: srtPath || ""
+                allItems.forEach(item => {
+                    const text = item.innerText.trim();
+                    // نتحقق أن النص رقم وأننا لم نضفه من قبل
+                    if (text && !isNaN(text) && !seenNumbers.has(text)) {
+                        seenNumbers.add(text);
+                        uniqueEps.push(text);
+                    }
                 });
-                console.log(`   ✅ تم.`);
-            } catch (err) {
-                console.log(`   ❌ خطأ في ${item.title}`);
-            } finally {
-                page.off('request', listener);
+                return uniqueEps;
+            });
+
+            const episodeCount = episodes.length;
+            console.log(`Verified: ${episodeCount} unique episodes for ${movie.title}`);
+
+            for (let i = 1; i <= episodeCount; i++) {
+                let currentM3u8 = "";
+                let currentSub = "";
+
+                await page.setRequestInterception(true);
+                const intercept = (request) => {
+                    const url = request.url();
+                    if (url.includes('.m3u8')) currentM3u8 = url;
+                    if (url.includes('.xml') && url.includes('subtitle')) currentSub = url;
+                    request.continue();
+                };
+                page.on('request', intercept);
+
+                // النقر على الحلقة رقم i (بناءً على النص الظاهر للحلقة لضمان الدقة)
+                await page.evaluate((num) => {
+                    const eps = Array.from(document.querySelectorAll('.play-item'));
+                    const target = eps.find(el => el.innerText.trim() == num);
+                    if (target) target.click();
+                }, i);
+
+                await new Promise(r => setTimeout(r, 6000));
+
+                movieData[`m3u8_epc${i}`] = currentM3u8;
+                const srtLocalPath = await downloadAndConvertSub(currentSub, movie.title, i);
+                movieData[`srt_epc${i}`] = srtLocalPath || "";
+
                 await page.setRequestInterception(false);
+                page.removeAllListeners('request');
+                
+                console.log(`  - Episode ${i} captured.`);
             }
+
+            results.push(movieData);
+        } catch (err) {
+            console.log(`Error in series ${movie.title}: ${err.message}`);
         }
-
-        fs.writeFileSync('series_data.json', JSON.stringify(results, null, 2));
-        console.log("🏁 انتهى العمل.");
-
-    } catch (e) {
-        console.log("❌ خطأ: " + e.message);
     }
 
+    fs.writeFileSync('movies.json', JSON.stringify(results, null, 2));
+    console.log("Scraping Completed. Data cleaned from duplicates.");
     await browser.close();
 }
 
