@@ -64,7 +64,7 @@ async function startScraping() {
         request.continue().catch(() => {}); 
     });
 
-    const albumUrl = 'https://home.hitv.vip/ar-ae/album/a_oDiibvcV7KndpzhZR78I';
+    const albumUrl = 'https://home.hitv.vip/ar-ae/album/a_MT4IPBbd_619kbg8HYh1g';
     await page.goto(albumUrl, { waitUntil: 'networkidle2' });
 
     const movies = await page.evaluate(() => {
