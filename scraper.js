@@ -3,7 +3,6 @@ const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
 
-// وظيفة تحويل XML إلى SRT
 async function downloadAndConvertSub(url, title) {
     if (!url) return null;
     try {
@@ -11,31 +10,23 @@ async function downloadAndConvertSub(url, title) {
         const xmlData = response.data;
         let srtContent = '';
         let index = 1;
-
-        // استخراج نصوص الترجمة والوقت (بناءً على هيكلة HiTV المشهورة)
         const matches = xmlData.matchAll(/<text start="([\d.]+)" end="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g);
-        
         for (const match of matches) {
             const start = formatTime(parseFloat(match[1]));
             const end = formatTime(parseFloat(match[2]));
-            const text = match[3].replace(/<[^>]+>/g, '').trim(); // تنظيف الوسوم
+            const text = match[3].replace(/<[^>]+>/g, '').trim();
             if (text) {
                 srtContent += `${index}\n${start} --> ${end}\n${text}\n\n`;
                 index++;
             }
         }
-
         const fileName = `${title.replace(/[/\\?%*:|"<>]/g, '-')}.srt`;
         const dir = './subtitles';
         if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-        
         const filePath = path.join(dir, fileName);
         fs.writeFileSync(filePath, srtContent);
         return filePath;
-    } catch (error) {
-        console.error(`خطأ في تحويل الترجمة لـ ${title}: ${error.message}`);
-        return null;
-    }
+    } catch (error) { return null; }
 }
 
 function formatTime(seconds) {
@@ -49,70 +40,79 @@ function formatTime(seconds) {
 
 async function startScraping() {
     const browser = await puppeteer.launch({ 
-        headless: "new",
-        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+        headless: "new", 
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'] 
     });
     const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
     const albumUrl = 'https://home.hitv.vip/ar-ae/album/a_MT4IPBbd_619kbg8HYh1g';
     
-    try {
-        console.log("جارٍ تحميل صفحة الألبوم...");
-        await page.goto(albumUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    console.log("جارٍ فتح صفحة الألبوم...");
+    await page.goto(albumUrl, { waitUntil: 'networkidle2' });
 
-        const movies = await page.evaluate(() => {
-            return Array.from(document.querySelectorAll('.album')).map(el => ({
-                title: el.querySelector('a')?.getAttribute('title') || 'Unknown',
-                url: el.querySelector('a')?.href || '',
-                image: el.querySelector('img')?.getAttribute('data-src') || el.querySelector('img')?.src || ''
-            }));
-        });
+    const movies = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('.album')).map(el => ({
+            title: el.querySelector('a')?.getAttribute('title') || 'NoTitle',
+            url: el.querySelector('a')?.href || '',
+            image: el.querySelector('img')?.getAttribute('data-src') || el.querySelector('img')?.src || ''
+        }));
+    });
 
-        console.log(`تم العثور على ${movies.length} فيلم/مسلسل.`);
-        const results = [];
+    console.log(`تم العثور على ${movies.length} عنصر.`);
+    const results = [];
 
-        for (let movie of movies) {
-            if (!movie.url) continue;
-            console.log(`جارٍ استخراج بيانات: ${movie.title}`);
-            
-            try {
-                await page.goto(movie.url, { waitUntil: 'networkidle2', timeout: 60000 });
-                
-                // البحث عن الروابط في بيانات الصفحة (NUXT)
-                const videoData = await page.evaluate(() => {
-                    const data = window.__NUXT__?.data[0] || {};
-                    const info = data.videoInfo || {};
-                    return {
-                        m3u8: info.playUrl || "",
-                        subs: info.subtitles || []
-                    };
-                });
+    for (let movie of movies) {
+        if (!movie.url) continue;
+        console.log(`جارٍ استخراج: ${movie.title}`);
+        
+        let foundM3u8 = "";
+        let foundSub = "";
 
-                const arabicSubObj = videoData.subs.find(s => s.lang === 'ar') || {};
-                const srtPath = await downloadAndConvertSub(arabicSubObj.url, movie.title);
-
-                results.push({
-                    title: movie.title,
-                    image: movie.image,
-                    m3u8_url: videoData.m3u8,
-                    original_subtitle: arabicSubObj.url || "",
-                    local_srt: srtPath || ""
-                });
-
-            } catch (err) {
-                console.error(`فشل استخراج ${movie.title}: ${err.message}`);
+        await page.setRequestInterception(true);
+        const requestHandler = (request) => {
+            const url = request.url();
+            if (url.includes('.m3u8')) {
+                foundM3u8 = url;
+                console.log(`  [M3U8 Found]`);
             }
+            if (url.includes('.xml') && (url.includes('subtitle') || url.includes('hitv'))) {
+                foundSub = url;
+                console.log(`  [Subtitle Found]`);
+            }
+            request.continue();
+        };
+
+        page.on('request', requestHandler);
+
+        try {
+            await page.goto(movie.url, { waitUntil: 'networkidle0', timeout: 60000 });
+            
+            // محاكاة حركة بسيطة لتفعيل المشغل (أحياناً لا يرسل طلبات إلا عند التفاعل)
+            await page.mouse.wheel(0, 500);
+            await new Promise(r => setTimeout(r, 8000)); // انتظر 8 ثوانٍ لالتقاط الروابط
+
+            const srtPath = await downloadAndConvertSub(foundSub, movie.title);
+
+            results.push({
+                title: movie.title,
+                image: movie.image,
+                m3u8_url: foundM3u8,
+                original_subtitle: foundSub,
+                local_srt: srtPath || ""
+            });
+        } catch (err) {
+            console.log(`خطأ في ${movie.title}: ${err.message}`);
         }
-
-        fs.writeFileSync('movies.json', JSON.stringify(results, null, 2));
-        console.log("تم الانتهاء وحفظ movies.json");
-
-    } catch (error) {
-        console.error("خطأ عام في السكريبت:", error.message);
-    } finally {
-        await browser.close();
+        
+        await page.setRequestInterception(false);
+        page.off('request', requestHandler);
     }
+
+    fs.writeFileSync('movies.json', JSON.stringify(results, null, 2));
+    console.log("تم تحديث movies.json بنجاح.");
+    await browser.close();
 }
 
 startScraping();
