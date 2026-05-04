@@ -49,34 +49,38 @@ async function startScraping() {
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
     const albumUrl = 'https://home.hitv.vip/ar-ae/gallery';
+    console.log("🚀 جاري فتح صفحة المعرض...");
+    
     await page.goto(albumUrl, { waitUntil: 'networkidle2' });
 
-    // استخراج الأفلام بناءً على الهيكل الجديد
-    const movies = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll('.series-wrapper')).map(el => {
+    // استخراج المسلسلات بناءً على الهيكل الجديد series-wrapper
+    const seriesList = await page.evaluate(() => {
+        const items = Array.from(document.querySelectorAll('.series-wrapper'));
+        return items.map(el => {
             const linkEl = el.querySelector('a');
             const imgEl = el.querySelector('img.van-image__img');
             return {
-                title: linkEl?.getAttribute('title') || 'NoTitle',
+                title: linkEl?.getAttribute('title')?.trim() || 'NoTitle',
                 url: linkEl?.href || '',
                 image: imgEl?.getAttribute('data-src') || imgEl?.src || ''
             };
-        }).filter(m => m.url.includes('/movie/')); // تصفية الروابط التي تحتوي على movie فقط
+        }).filter(item => item.url !== '');
     });
 
-    console.log(`🔍 تم العثور على ${movies.length} فيلم.`);
+    console.log(`🔍 تم العثور على ${seriesList.length} مسلسل/عمل.`);
     const results = [];
 
-    for (let movie of movies) {
-        console.log(`🎬 جاري معالجة الفيلم: ${movie.title}`);
+    for (let series of seriesList) {
+        console.log(`🎬 جاري معالجة: ${series.title}`);
         
         let foundM3u8 = "";
         let foundSub = "";
 
-        // تفعيل التنصت على الشبكة لجلب الروابط
+        // تفعيل التنصت على الشبكة
         await page.setRequestInterception(true);
         const requestListener = (request) => {
             const url = request.url();
+            // البحث عن روابط الفيديو والترجمة بمجرد دخول الصفحة
             if (url.includes('.m3u8')) foundM3u8 = url;
             if (url.includes('.xml') && url.includes('subtitle')) foundSub = url;
             request.continue();
@@ -84,34 +88,35 @@ async function startScraping() {
         page.on('request', requestListener);
 
         try {
-            await page.goto(movie.url, { waitUntil: 'networkidle0', timeout: 60000 });
+            // الدخول لصفحة العمل (ستبدأ الحلقة الأولى تلقائياً بالتحميل في الخلفية)
+            await page.goto(series.url, { waitUntil: 'networkidle0', timeout: 60000 });
             
-            // ننتظر قليلاً للتأكد من تحميل المشغل والروابط
+            // ننتظر مدة كافية لظهور روابط الميديا في الشبكة
             await new Promise(r => setTimeout(r, 10000));
 
-            const srtPath = await downloadAndConvertSub(foundSub, movie.title);
+            const srtPath = await downloadAndConvertSub(foundSub, series.title);
 
             results.push({
-                title: movie.title,
-                image: movie.image,
-                url: movie.url,
-                m3u8_url: foundM3u8,
-                subtitle_path: srtPath || "لم يتم العثور على ترجمة"
+                title: series.title,
+                image: series.image,
+                page_url: series.url,
+                video_url: foundM3u8,
+                subtitle_local_path: srtPath || "No Subtitle Found"
             });
 
-            console.log(`   ✅ تم الاستخراج: ${foundM3u8 ? 'رابط الفيديو جاهز' : 'فشل جلب الفيديو'}`);
+            console.log(`   ✅ تم الاستخراج بنجاح.`);
 
         } catch (err) {
-            console.log(`   ❌ خطأ أثناء معالجة ${movie.title}: ${err.message}`);
+            console.log(`   ❌ خطأ أثناء معالجة ${series.title}: ${err.message}`);
         } finally {
-            // إيقاف التنصت لتجنب التداخل مع الفيلم التالي
+            // تنظيف التنصت قبل الانتقال للعمل التالي
             page.off('request', requestListener);
             await page.setRequestInterception(false);
         }
     }
 
-    fs.writeFileSync('movies_data.json', JSON.stringify(results, null, 2));
-    console.log("🏁 انتهى العمل. تم حفظ البيانات في movies_data.json");
+    fs.writeFileSync('series_data.json', JSON.stringify(results, null, 2));
+    console.log("🏁 انتهى العمل. تم حفظ البيانات في series_data.json");
     await browser.close();
 }
 
