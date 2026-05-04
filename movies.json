@@ -2,43 +2,43 @@
   {
     "title": "الطبيب شين",
     "image": "https://s.hitv.vip/origin/fd6636fd07494d52a3a3ce461e4ae2991773024986234.jpg?x-oss-process=image/resize,w_800,m_lfit",
-    "m3u8_url": "",
-    "original_subtitle": "",
-    "local_srt": ""
+    "m3u8_url": "https://sk2.googotv.com/m3u8/e9599efd6f7daf096b0a38ebf31e51a7.m3u8?__token__sk2.googotv.com=exp=1777963351~acl=%2fm3u8%2fe9599efd6f7daf096b0a38ebf31e51a7*~hmac=19fc9e73e213cd8c6449cc590b21ab277e11932ea2038dad401be093895cef7d",
+    "original_subtitle": "https://s.hitv.vip/subtitle/1cf9c047014749bcac9b611dd846521b1773539702863.xml",
+    "local_srt": "subtitles/الطبيب شين.srt"
   },
   {
     "title": "الانعكاس",
     "image": "https://s.hitv.vip/origin/23023584fa594649bb6f594a4081578c1776393987570.jpg?x-oss-process=image/resize,w_800,m_lfit",
-    "m3u8_url": "",
-    "original_subtitle": "",
-    "local_srt": ""
+    "m3u8_url": "https://sk2.googotv.com/m3u8/ed327d0dcf88375e6730aeff2e8082e3.m3u8?__token__sk2.googotv.com=exp=1777963363~acl=%2fm3u8%2fed327d0dcf88375e6730aeff2e8082e3*~hmac=94b2a5b899df231ab5a4dfb9de404a131ed7917df612945eb32d62b74c7dd420",
+    "original_subtitle": "https://s.hitv.vip/subtitle/790150edbfca46e3836d98e3c025ecdc1776419691295.xml",
+    "local_srt": "subtitles/الانعكاس.srt"
   },
   {
     "title": "القيمة المطلقة للرومانسية",
     "image": "https://s.hitv.vip/origin/1687e70cc5504a11b9190cc5e00795fd1775113313583.jpg?x-oss-process=image/resize,w_800,m_lfit",
-    "m3u8_url": "",
-    "original_subtitle": "",
-    "local_srt": ""
+    "m3u8_url": "https://sk2.googotv.com/m3u8/75a67e55d09bc0719aeffec063aa9318.m3u8?__token__sk2.googotv.com=exp=1777963376~acl=%2fm3u8%2f75a67e55d09bc0719aeffec063aa9318*~hmac=7db1adb42542ca094e1f4076f22d47974cd7c6a223a14252f0e87c98dd83b35e",
+    "original_subtitle": "https://s.hitv.vip/subtitle/50eedc9b066b447c877857e00be710991776463497346.xml",
+    "local_srt": "subtitles/القيمة المطلقة للرومانسية.srt"
   },
   {
     "title": "أرض الذهب",
     "image": "https://s.hitv.vip/origin/f45258fbf4c74c38a22aeee94080d2e61776393847440.jpg?x-oss-process=image/resize,w_800,m_lfit",
-    "m3u8_url": "",
-    "original_subtitle": "",
-    "local_srt": ""
+    "m3u8_url": "https://sk2.googotv.com/m3u8/2e4b2d1c4e0e3337ad6553e7f7a5ab0c.m3u8?__token__sk2.googotv.com=exp=1777963388~acl=%2fm3u8%2f2e4b2d1c4e0e3337ad6553e7f7a5ab0c*~hmac=fa20412e778df5155e75c34aefb6f93a7c9333e55eb252fbf5bf237eaf5fa052",
+    "original_subtitle": "https://s.hitv.vip/subtitle/7f3181d1e4bd432ab54688cbf6631e211777471545720.xml",
+    "local_srt": "subtitles/أرض الذهب.srt"
   },
   {
     "title": "في موسمك المشرق",
     "image": "https://s.hitv.vip/origin/a6cf688a299e426f946ca336a0dee8f61771130639857.jpg?x-oss-process=image/resize,w_800,m_lfit",
-    "m3u8_url": "",
-    "original_subtitle": "",
-    "local_srt": ""
+    "m3u8_url": "https://sk2.googotv.com/m3u8/5b7e4bb19f54e2aeb6452eb0fd6021a6.m3u8?__token__sk2.googotv.com=exp=1777963400~acl=%2fm3u8%2f5b7e4bb19f54e2aeb6452eb0fd6021a6*~hmac=b215aed34b61f7c8b5e5d122f63d2d015e445736676097aadcca8d125d2264a3",
+    "original_subtitle": "https://s.hitv.vip/subtitle/65f7143bc9424f3dae844b2cb4aa68081771645612404.xml",
+    "local_srt": "subtitles/في موسمك المشرق.srt"
   },
   {
     "title": "رهاب الحب",
     "image": "https://s.hitv.vip/origin/333c56c71ac547edb5b967e858360a001771130528418.jpg?x-oss-process=image/resize,w_800,m_lfit",
-    "m3u8_url": "",
-    "original_subtitle": "",
-    "local_srt": ""
+    "m3u8_url": "https://sk2.googotv.com/m3u8/365ccd0cd3405a832a6068163a794b61.m3u8?__token__sk2.googotv.com=exp=1777963412~acl=%2fm3u8%2f365ccd0cd3405a832a6068163a794b61*~hmac=e98916417694f1c89d00308bdf967b8d6fc9ba434276256aff69e90a99b0efbc",
+    "original_subtitle": "https://s.hitv.vip/subtitle/ae721911687b440c8e360d3beb2a44691771545199984.xml",
+    "local_srt": "subtitles/رهاب الحب.srt"
   }
 ]
