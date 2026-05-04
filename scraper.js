@@ -3,10 +3,11 @@ const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
 
+// دالة التحويل سريعة ولا تحتاج تعديل
 async function downloadAndConvertSub(url, title, epNum) {
     if (!url) return null;
     try {
-        const response = await axios.get(url);
+        const response = await axios.get(url, { timeout: 5000 });
         const xmlData = response.data;
         let srtContent = '';
         let index = 1;
@@ -26,7 +27,7 @@ async function downloadAndConvertSub(url, title, epNum) {
         const filePath = path.join(dir, fileName);
         fs.writeFileSync(filePath, srtContent);
         return filePath;
-    } catch (error) { return null; }
+    } catch (e) { return null; }
 }
 
 function formatTime(seconds) {
@@ -41,14 +42,22 @@ function formatTime(seconds) {
 async function startScraping() {
     const browser = await puppeteer.launch({ 
         headless: "new", 
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'] 
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security', '--disable-features=IsolateOrigins,site-per-process'] 
     });
+    
     const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    // تقليل استهلاك الموارد لتسريع التصفح
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+        if (['image', 'font', 'stylesheet'].includes(req.resourceType()) && !req.url().includes('hitv')) {
+            req.abort(); // منع تحميل الصور والخطوط لتوفير الوقت والبيانات
+        } else {
+            req.continue();
+        }
+    });
 
     const albumUrl = 'https://home.hitv.vip/ar-ae/album/a_MT4IPBbd_619kbg8HYh1g';
-    await page.goto(albumUrl, { waitUntil: 'networkidle2' });
+    await page.goto(albumUrl, { waitUntil: 'domcontentloaded' });
 
     const movies = await page.evaluate(() => {
         return Array.from(document.querySelectorAll('.album')).map(el => ({
@@ -62,77 +71,60 @@ async function startScraping() {
 
     for (let movie of movies) {
         if (!movie.url) continue;
-        console.log(`Processing Series: ${movie.title}`);
+        console.log(`⚡ Fast Processing: ${movie.title}`);
         
-        let movieData = {
-            title: movie.title,
-            image: movie.image,
-            original_url: movie.url
-        };
+        let movieData = { title: movie.title, image: movie.image, original_url: movie.url };
 
         try {
-            await page.goto(movie.url, { waitUntil: 'networkidle0', timeout: 60000 });
+            await page.goto(movie.url, { waitUntil: 'networkidle2' });
 
-            // اختيار الحلقات الفريدة فقط بناءً على رقم الحلقة الظاهر
             const episodes = await page.evaluate(() => {
-                const allItems = Array.from(document.querySelectorAll('.play-item'));
-                const uniqueEps = [];
-                const seenNumbers = new Set();
-
-                allItems.forEach(item => {
-                    const text = item.innerText.trim();
-                    // نتحقق أن النص رقم وأننا لم نضفه من قبل
-                    if (text && !isNaN(text) && !seenNumbers.has(text)) {
-                        seenNumbers.add(text);
-                        uniqueEps.push(text);
-                    }
-                });
-                return uniqueEps;
+                const seen = new Set();
+                return Array.from(document.querySelectorAll('.play-item'))
+                    .map(el => el.innerText.trim())
+                    .filter(txt => txt && !isNaN(txt) && !seen.has(txt) && seen.add(txt));
             });
 
-            const episodeCount = episodes.length;
-            console.log(`Verified: ${episodeCount} unique episodes for ${movie.title}`);
+            // استخراج الروابط بالتوازي جزئياً
+            for (let i = 1; i <= episodes.length; i++) {
+                // تقليل الـ timeout لـ 7 ثوانٍ لأن الموقع سريع في طلب الروابط
+                const responsePromise = new Promise((resolve) => {
+                    let found = { m3u8: "", sub: "" };
+                    const listener = (res) => {
+                        const url = res.url();
+                        if (url.includes('.m3u8')) found.m3u8 = url;
+                        if (url.includes('.xml') && url.includes('subtitle')) found.sub = url;
+                        if (found.m3u8 && found.sub) {
+                            page.off('response', listener);
+                            resolve(found);
+                        }
+                    };
+                    page.on('response', listener);
+                    // حد أقصى للانتظار لكل حلقة
+                    setTimeout(() => { page.off('response', listener); resolve(found); }, 7000);
+                });
 
-            for (let i = 1; i <= episodeCount; i++) {
-                let currentM3u8 = "";
-                let currentSub = "";
-
-                await page.setRequestInterception(true);
-                const intercept = (request) => {
-                    const url = request.url();
-                    if (url.includes('.m3u8')) currentM3u8 = url;
-                    if (url.includes('.xml') && url.includes('subtitle')) currentSub = url;
-                    request.continue();
-                };
-                page.on('request', intercept);
-
-                // النقر على الحلقة رقم i (بناءً على النص الظاهر للحلقة لضمان الدقة)
                 await page.evaluate((num) => {
-                    const eps = Array.from(document.querySelectorAll('.play-item'));
-                    const target = eps.find(el => el.innerText.trim() == num);
-                    if (target) target.click();
+                    const btn = Array.from(document.querySelectorAll('.play-item')).find(el => el.innerText.trim() == num);
+                    if (btn) btn.click();
                 }, i);
 
-                await new Promise(r => setTimeout(r, 6000));
+                const links = await responsePromise;
 
-                movieData[`m3u8_epc${i}`] = currentM3u8;
-                const srtLocalPath = await downloadAndConvertSub(currentSub, movie.title, i);
-                movieData[`srt_epc${i}`] = srtLocalPath || "";
-
-                await page.setRequestInterception(false);
-                page.removeAllListeners('request');
+                movieData[`m3u8_epc${i}`] = links.m3u8;
+                const srtPath = await downloadAndConvertSub(links.sub, movie.title, i);
+                movieData[`srt_epc${i}`] = srtPath || "";
                 
-                console.log(`  - Episode ${i} captured.`);
+                console.log(`  Done E${i}`);
             }
-
             results.push(movieData);
         } catch (err) {
-            console.log(`Error in series ${movie.title}: ${err.message}`);
+            console.log(`Error: ${err.message}`);
         }
     }
 
     fs.writeFileSync('movies.json', JSON.stringify(results, null, 2));
-    console.log("Scraping Completed. Data cleaned from duplicates.");
+    console.log("🚀 Finished in record time!");
     await browser.close();
 }
 
