@@ -3,10 +3,11 @@ const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
 
-async function downloadAndConvertSub(url, title) {
+// دالة تحويل الترجمة
+async function downloadAndConvertSub(url, title, epNum) {
     if (!url) return null;
     try {
-        const response = await axios.get(url);
+        const response = await axios.get(url, { timeout: 10000 });
         const xmlData = response.data;
         let srtContent = '';
         let index = 1;
@@ -20,13 +21,13 @@ async function downloadAndConvertSub(url, title) {
                 index++;
             }
         }
-        const fileName = `${title.replace(/[/\\?%*:|"<>]/g, '-')}.srt`;
+        const fileName = `${title.replace(/[/\\?%*:|"<>]/g, '-')}_E${epNum}.srt`;
         const dir = './subtitles';
         if (!fs.existsSync(dir)) fs.mkdirSync(dir);
         const filePath = path.join(dir, fileName);
         fs.writeFileSync(filePath, srtContent);
         return filePath;
-    } catch (error) { return null; }
+    } catch (e) { return null; }
 }
 
 function formatTime(seconds) {
@@ -45,11 +46,9 @@ async function startScraping() {
     });
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
     const albumUrl = 'https://home.hitv.vip/ar-ae/album/a_MT4IPBbd_619kbg8HYh1g';
-    
-    console.log("جارٍ فتح صفحة الألبوم...");
     await page.goto(albumUrl, { waitUntil: 'networkidle2' });
 
     const movies = await page.evaluate(() => {
@@ -60,58 +59,75 @@ async function startScraping() {
         }));
     });
 
-    console.log(`تم العثور على ${movies.length} عنصر.`);
     const results = [];
 
     for (let movie of movies) {
         if (!movie.url) continue;
-        console.log(`جارٍ استخراج: ${movie.title}`);
+        console.log(`🎬 جاري معالجة المسلسل: ${movie.title}`);
         
-        let foundM3u8 = "";
-        let foundSub = "";
-
-        await page.setRequestInterception(true);
-        const requestHandler = (request) => {
-            const url = request.url();
-            if (url.includes('.m3u8')) {
-                foundM3u8 = url;
-                console.log(`  [M3U8 Found]`);
-            }
-            if (url.includes('.xml') && (url.includes('subtitle') || url.includes('hitv'))) {
-                foundSub = url;
-                console.log(`  [Subtitle Found]`);
-            }
-            request.continue();
+        let movieData = {
+            title: movie.title,
+            image: movie.image,
+            original_url: movie.url
         };
 
-        page.on('request', requestHandler);
-
         try {
-            await page.goto(movie.url, { waitUntil: 'networkidle0', timeout: 60000 });
-            
-            // محاكاة حركة بسيطة لتفعيل المشغل (أحياناً لا يرسل طلبات إلا عند التفاعل)
-            await page.mouse.wheel(0, 500);
-            await new Promise(r => setTimeout(r, 8000)); // انتظر 8 ثوانٍ لالتقاط الروابط
-
-            const srtPath = await downloadAndConvertSub(foundSub, movie.title);
-
-            results.push({
-                title: movie.title,
-                image: movie.image,
-                m3u8_url: foundM3u8,
-                original_subtitle: foundSub,
-                local_srt: srtPath || ""
+            // أولاً: نعرف عدد الحلقات
+            await page.goto(movie.url, { waitUntil: 'networkidle0' });
+            const episodes = await page.evaluate(() => {
+                const seen = new Set();
+                return Array.from(document.querySelectorAll('.play-item'))
+                    .map(el => el.innerText.trim())
+                    .filter(txt => txt && !isNaN(txt) && !seen.has(txt) && seen.add(txt));
             });
+
+            console.log(`📌 تم العثور على ${episodes.length} حلقة.`);
+
+            // ثانياً: نمر على كل حلقة كأنها زيارة جديدة
+            for (let i = 1; i <= episodes.length; i++) {
+                let foundM3u8 = "";
+                let foundSub = "";
+
+                // تفعيل التنصت
+                await page.setRequestInterception(true);
+                const listener = (request) => {
+                    const url = request.url();
+                    if (url.includes('.m3u8')) foundM3u8 = url;
+                    if (url.includes('.xml') && url.includes('subtitle')) foundSub = url;
+                    request.continue();
+                };
+                page.on('request', listener);
+
+                // الانتقال للحلقة المحددة عبر إضافة query parameter للرابط (إذا كان الموقع يدعمها)
+                // أو النقر والانتظار
+                await page.goto(movie.url, { waitUntil: 'networkidle0' });
+                await page.evaluate((num) => {
+                    const btn = Array.from(document.querySelectorAll('.play-item')).find(el => el.innerText.trim() == num);
+                    if (btn) btn.click();
+                }, i);
+
+                // ننتظر التحميل والـ Network
+                await new Promise(r => setTimeout(r, 8000));
+
+                movieData[`m3u8_epc${i}`] = foundM3u8;
+                const srtPath = await downloadAndConvertSub(foundSub, movie.title, i);
+                movieData[`srt_epc${i}`] = srtPath || "";
+
+                console.log(`   ✅ الحلقة ${i}: ${foundM3u8 ? 'تم جلب الرابط' : 'لم يتم العثور'}`);
+
+                // إغلاق التنصت لهذه الحلقة
+                await page.setRequestInterception(false);
+                page.off('request', listener);
+            }
+
+            results.push(movieData);
         } catch (err) {
-            console.log(`خطأ في ${movie.title}: ${err.message}`);
+            console.log(`❌ خطأ في ${movie.title}: ${err.message}`);
         }
-        
-        await page.setRequestInterception(false);
-        page.off('request', requestHandler);
     }
 
     fs.writeFileSync('movies.json', JSON.stringify(results, null, 2));
-    console.log("تم تحديث movies.json بنجاح.");
+    console.log("🏁 انتهى الاستخراج بنجاح.");
     await browser.close();
 }
 
