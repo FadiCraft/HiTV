@@ -1,4 +1,4 @@
-name: HiTV Auto Scraper
+name: HiTV JSON Scraper Action
 
 on:
   workflow_dispatch:
@@ -7,15 +7,15 @@ permissions:
   contents: write
 
 jobs:
-  run-scraper:
+  scrape-to-json:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -25,18 +25,21 @@ jobs:
           npm install
           npx playwright install chromium --with-deps
 
-      - name: Run Scraper
+      - name: Run Scraper Script
         run: node scraper.js
 
-      - name: Commit and Push
+      - name: Commit and Push JSON Data
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
+          
           git pull --rebase origin main
-          git add .
+          
+          git add data.json subtitles/*.srt
+          
           if git diff --quiet && git diff --staged --quiet; then
-            echo "No changes"
+            echo "لا توجد بيانات جديدة لحفظها."
           else
-            git commit -m "Update links [skip ci]"
+            git commit -m "تحديث بيانات JSON والترجمات [skip ci]"
             git push origin main
           fi
