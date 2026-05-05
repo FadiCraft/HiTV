@@ -1,9 +1,9 @@
-name: Hitv Auto Scraper
+name: KissKH Auto Scraper
 
 on:
   schedule:
-    - cron: '0 0 * * *' # تشغيل يومي تلقائي
-  workflow_dispatch: # تشغيل يدوي بنقرة زر
+    - cron: '0 0 * * *' 
+  workflow_dispatch: 
 
 jobs:
   build:
@@ -21,21 +21,22 @@ jobs:
         run: npm install puppeteer axios
 
       - name: Run Scraper
+        # إضافة متغير بيئة للتأكد من تشغيل المتصفح بدون واجهة رسومية
         run: node scraper.js
+        env:
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'false'
 
       - name: Commit Results
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "actions@github.com"
           
-          # إضافة ملف الـ JSON
-          git add movies.json
+          # تغيير اسم الملف ليتناسب مع الكود الجديد
+          git add kisskh_data.json
           
-          # التحقق من وجود مجلد الترجمات قبل محاولة الإضافة لتجنب خطأ 128
           if [ -d "subtitles" ]; then
-            git add subtitles/*.srt || echo "No subtitles found to add"
+            git add subtitles/*.srt || echo "No subtitles found"
           fi
           
-          # الكوميت والرفع في حال وجود تغييرات فقط
-          git commit -m "Update movies data: $(date)" || echo "No changes to commit"
+          git commit -m "Update KissKH data: $(date)" || echo "No changes to commit"
           git push
