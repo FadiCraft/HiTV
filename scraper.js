@@ -1,117 +1,101 @@
-const puppeteer = require('puppeteer');
+const { chromium } = require('playwright');
 const fs = require('fs');
 const axios = require('axios');
-const path = require('path');
 
-async function downloadSub(url, title, epNum) {
-    if (!url || !url.startsWith('http')) return null;
-    try {
-        const response = await axios.get(url);
-        const fileName = `${title.replace(/[/\\?%*:|"<>]/g, '-')}_E${epNum}.srt`;
-        const dir = './subtitles';
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-        const filePath = path.join(dir, fileName);
-        fs.writeFileSync(filePath, response.data);
-        return filePath;
-    } catch (error) { return null; }
+// دالة لتحويل XML الخاص بـ HiTV إلى صيغة SRT
+function convertXmlToSrt(xmlText) {
+    let srt = '';
+    const lines = xmlText.match(/<p begin="([^"]+)" end="([^"]+)"[^>]*>(.*?)<\/p>/g);
+    
+    if (!lines) return null;
+
+    lines.forEach((line, index) => {
+        const match = line.match(/<p begin="([^"]+)" end="([^"]+)"[^>]*>(.*?)<\/p>/);
+        if (match) {
+            let start = match[1].replace('.', ',');
+            let end = match[2].replace('.', ',');
+            let text = match[3].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim();
+            
+            srt += `${index + 1}\n${start} --> ${end}\n${text}\n\n`;
+        }
+    });
+    return srt;
 }
 
 async function startScraping() {
-    const browser = await puppeteer.launch({ 
-        headless: "new", 
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'] 
-    });
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext();
+    const page = await context.newPage();
 
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    const albumUrl = "https://home.hitv.vip/ar-ae/album/a_8TWpC3uCmdAdOk5YgJqW";
+    let results = [];
 
-    // تفعيل اعتراض الطلبات مرة واحدة فقط على مستوى المتصفح لتجنب التداخل
-    let currentM3u8 = "";
-    let currentSub = "";
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-        const url = request.url();
-        if (url.includes('.m3u8')) currentM3u8 = url;
-        if (url.includes('.srt')) currentSub = url;
-        request.continue().catch(() => {});
+    // مراقبة الشبكة لالتقاط الروابط
+    page.on('response', async (response) => {
+        const url = response.url();
+        if (url.includes('.m3u8')) {
+            page.currentM3u8 = url;
+        }
+        if (url.includes('.xml') && url.includes('subtitle')) {
+            page.currentSubtitle = url;
+        }
     });
 
     try {
-        const targetUrl = 'https://kisskh.do/Explore?type=2&order=2';
-        console.log(`🚀 Start: ${targetUrl}`);
-        
-        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        console.log("جاري الدخول لصفحة الألبوم...");
+        await page.goto(albumUrl, { waitUntil: 'networkidle' });
 
-        const movies = await page.evaluate(() => {
-            return Array.from(document.querySelectorAll('app-main-card')).map(card => ({
-                title: card.querySelector('.mat-card-title')?.innerText.trim(),
-                url: window.location.origin + card.getAttribute('route')
-            })).filter(m => m.title && m.url.includes('/Drama'));
-        });
+        // استخراج روابط المسلسلات داخل الألبوم
+        const seriesLinks = await page.$$eval('.album a', els => els.map(el => el.href));
 
-        console.log(`✅ Found ${movies.length} Series.`);
-        const results = [];
-
-        for (let movie of movies) {
-            console.log(`\n🔍 Processing: ${movie.title}`);
+        for (const sLink of seriesLinks) {
+            console.log(`جاري معالجة المسلسل: ${sLink}`);
+            await page.goto(sLink, { waitUntil: 'networkidle' });
             
-            try {
-                await page.goto(movie.url, { waitUntil: 'networkidle0', timeout: 60000 });
+            // استخراج قائمة الحلقات
+            const episodes = await page.$$('.play-item');
+            
+            for (let i = 0; i < episodes.length; i++) {
+                console.log(`جاري استخراج بيانات الحلقة ${i + 1}...`);
                 
-                // انتظار ظهور أزرار الحلقات
-                await page.waitForSelector('button.mat-raised-button', { timeout: 15000 }).catch(() => {});
+                // تصفير الروابط المؤقتة قبل الضغط
+                page.currentM3u8 = null;
+                page.currentSubtitle = null;
 
-                const episodeList = await page.evaluate(() => {
-                    const btns = Array.from(document.querySelectorAll('button.mat-raised-button'));
-                    return btns.map(b => b.innerText.replace(/[^\d]/g, '').trim()).filter(n => n !== "");
-                });
+                await episodes[i].click();
+                await page.waitForTimeout(4000); // انتظار تحميل المشغل والروابط
 
-                console.log(`   📦 Found ${episodeList.length} episodes.`);
-                
-                let movieData = { title: movie.title, url: movie.url, episodes: [] };
+                const epData = {
+                    episode: i + 1,
+                    m3u8: page.currentM3u8 || "لم يتم العثور على رابط",
+                    subtitle_url: page.currentSubtitle || "لا توجد ترجمة"
+                };
 
-                for (let epNum of episodeList) {
-                    // تصفير الروابط قبل النقر على الحلقة الجديدة
-                    currentM3u8 = "";
-                    currentSub = "";
-
-                    // النقر على زر الحلقة
-                    await page.evaluate((num) => {
-                        const btns = Array.from(document.querySelectorAll('button.mat-raised-button'));
-                        const target = btns.find(b => b.innerText.trim() == num || b.innerText.includes(` ${num} `));
-                        if (target) {
-                            target.scrollIntoView();
-                            target.click();
+                // تحميل وتحويل الترجمة
+                if (page.currentSubtitle) {
+                    try {
+                        const subRes = await axios.get(page.currentSubtitle);
+                        const srtContent = convertXmlToSrt(subRes.data);
+                        if (srtContent) {
+                            const fileName = `subtitle_ep_${i + 1}.srt`;
+                            fs.writeFileSync(fileName, srtContent);
+                            epData.local_subtitle = fileName;
                         }
-                    }, epNum);
-
-                    // انتظار التقاط الروابط من الشبكة
-                    await new Promise(r => setTimeout(r, 8000));
-
-                    const srtLocalPath = await downloadSub(currentSub, movie.title, epNum);
-
-                    movieData.episodes.push({
-                        ep: epNum,
-                        video: currentM3u8,
-                        sub: currentSub,
-                        local_sub: srtLocalPath || ""
-                    });
-                    console.log(`     - Ep ${epNum}: ${currentM3u8 ? '✅ Video Found' : '❌ No Video'}`);
+                    } catch (e) {
+                        console.error("خطأ في تحميل الترجمة");
+                    }
                 }
 
-                results.push(movieData);
-                // حفظ مؤقت للبيانات بعد كل مسلسل لضمان عدم ضياعها
-                fs.writeFileSync('movies.json', JSON.stringify(results, null, 2));
-
-            } catch (err) {
-                console.log(`   ⚠️ Error in ${movie.title}: ${err.message}`);
+                results.push(epData);
             }
         }
 
-        console.log(`\n🎉 Process Completed!`);
+        // حفظ البيانات النهائية في ملف JSON
+        fs.writeFileSync('data.json', JSON.stringify(results, null, 2), 'utf-8');
+        console.log("تم الانتهاء! تم حفظ الروابط في data.json والترجمات محلياً.");
 
-    } catch (e) {
-        console.log(`🔥 Critical Error: ${e.message}`);
+    } catch (error) {
+        console.error("حدث خطأ:", error);
     } finally {
         await browser.close();
     }
