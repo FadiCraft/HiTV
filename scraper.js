@@ -1,12 +1,12 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const axios = require('axios');
+const path = require('path');
 
-// دالة لتحويل XML الخاص بـ HiTV إلى صيغة SRT
+// دالة تحويل XML إلى SRT
 function convertXmlToSrt(xmlText) {
     let srt = '';
     const lines = xmlText.match(/<p begin="([^"]+)" end="([^"]+)"[^>]*>(.*?)<\/p>/g);
-    
     if (!lines) return null;
 
     lines.forEach((line, index) => {
@@ -14,8 +14,7 @@ function convertXmlToSrt(xmlText) {
         if (match) {
             let start = match[1].replace('.', ',');
             let end = match[2].replace('.', ',');
-            let text = match[3].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim();
-            
+            let text = match[3].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<\/?[^>]+(>|$)/g, "").trim();
             srt += `${index + 1}\n${start} --> ${end}\n${text}\n\n`;
         }
     });
@@ -24,78 +23,84 @@ function convertXmlToSrt(xmlText) {
 
 async function startScraping() {
     const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    const page = await browser.newPage();
+    
+    // إعداد المجلدات
+    if (!fs.existsSync('subtitles')) fs.mkdirSync('subtitles');
 
     const albumUrl = "https://home.hitv.vip/ar-ae/album/a_8TWpC3uCmdAdOk5YgJqW";
-    let results = [];
+    let allData = [];
 
-    // مراقبة الشبكة لالتقاط الروابط
-    page.on('response', async (response) => {
-        const url = response.url();
-        if (url.includes('.m3u8')) {
-            page.currentM3u8 = url;
-        }
-        if (url.includes('.xml') && url.includes('subtitle')) {
-            page.currentSubtitle = url;
-        }
+    // مراقب الشبكة
+    page.on('response', async (res) => {
+        const url = res.url();
+        if (url.includes('.m3u8')) page.latestM3u8 = url;
+        if (url.includes('.xml') && url.includes('subtitle')) page.latestSub = url;
     });
 
     try {
-        console.log("جاري الدخول لصفحة الألبوم...");
+        console.log("🚀 جاري فتح المتصفح...");
         await page.goto(albumUrl, { waitUntil: 'networkidle' });
 
-        // استخراج روابط المسلسلات داخل الألبوم
+        // استخراج روابط المسلسلات من الألبوم
         const seriesLinks = await page.$$eval('.album a', els => els.map(el => el.href));
+        console.log(`✅ تم العثور على ${seriesLinks.length} مسلسل.`);
 
         for (const sLink of seriesLinks) {
-            console.log(`جاري معالجة المسلسل: ${sLink}`);
+            console.log(`📖 معالجة: ${sLink}`);
             await page.goto(sLink, { waitUntil: 'networkidle' });
             
-            // استخراج قائمة الحلقات
-            const episodes = await page.$$('.play-item');
+            const seriesName = await page.title();
             
-            for (let i = 0; i < episodes.length; i++) {
-                console.log(`جاري استخراج بيانات الحلقة ${i + 1}...`);
-                
-                // تصفير الروابط المؤقتة قبل الضغط
-                page.currentM3u8 = null;
-                page.currentSubtitle = null;
+            // التعامل مع "Tabs" الحلقات (مثلاً 1-50، 51-100)
+            const tabs = await page.$$('.group-tab');
+            const tabCount = tabs.length > 0 ? tabs.length : 1;
 
-                await episodes[i].click();
-                await page.waitForTimeout(4000); // انتظار تحميل المشغل والروابط
-
-                const epData = {
-                    episode: i + 1,
-                    m3u8: page.currentM3u8 || "لم يتم العثور على رابط",
-                    subtitle_url: page.currentSubtitle || "لا توجد ترجمة"
-                };
-
-                // تحميل وتحويل الترجمة
-                if (page.currentSubtitle) {
-                    try {
-                        const subRes = await axios.get(page.currentSubtitle);
-                        const srtContent = convertXmlToSrt(subRes.data);
-                        if (srtContent) {
-                            const fileName = `subtitle_ep_${i + 1}.srt`;
-                            fs.writeFileSync(fileName, srtContent);
-                            epData.local_subtitle = fileName;
-                        }
-                    } catch (e) {
-                        console.error("خطأ في تحميل الترجمة");
-                    }
+            for (let t = 0; t < tabCount; t++) {
+                if (tabs.length > 0) {
+                    await tabs[t].click();
+                    await page.waitForTimeout(1000);
                 }
 
-                results.push(epData);
+                const episodes = await page.$$('.play-item');
+                for (let i = 0; i < episodes.length; i++) {
+                    const epName = await episodes[i].innerText();
+                    console.log(`🎬 حلقة ${epName}...`);
+
+                    page.latestM3u8 = null;
+                    page.latestSub = null;
+
+                    await episodes[i].click();
+                    await page.waitForTimeout(5000); // وقت كافٍ للتحميل
+
+                    let entry = {
+                        series: seriesName,
+                        episode: epName,
+                        m3u8: page.latestM3u8 || "N/A",
+                        subtitle_url: page.latestSub || "N/A"
+                    };
+
+                    if (page.latestSub) {
+                        try {
+                            const response = await axios.get(page.latestSub);
+                            const srt = convertXmlToSrt(response.data);
+                            if (srt) {
+                                const subPath = `subtitles/${seriesName.replace(/\s+/g, '_')}_Ep${epName}.srt`;
+                                fs.writeFileSync(subPath, srt);
+                                entry.local_subtitle = subPath;
+                            }
+                        } catch (e) { console.log("⚠️ فشل تحميل الترجمة لهذه الحلقة."); }
+                    }
+                    allData.push(entry);
+                }
             }
         }
 
-        // حفظ البيانات النهائية في ملف JSON
-        fs.writeFileSync('data.json', JSON.stringify(results, null, 2), 'utf-8');
-        console.log("تم الانتهاء! تم حفظ الروابط في data.json والترجمات محلياً.");
+        fs.writeFileSync('output.json', JSON.stringify(allData, null, 2));
+        console.log("✨ انتهى العمل بنجاح! تم تحديث output.json");
 
-    } catch (error) {
-        console.error("حدث خطأ:", error);
+    } catch (err) {
+        console.error("❌ خطأ كارثي:", err);
     } finally {
         await browser.close();
     }
