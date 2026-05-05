@@ -1,33 +1,48 @@
-name: Node.js HiTV Scraper
+name: HiTV Auto Scraper
 
 on:
-  workflow_dispatch: # تشغيل يدوي من زر Run Workflow
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: write
 
 jobs:
-  scrape:
+  run-scraper:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          node-version: '18'
+          fetch-depth: 0 # مهم جداً لتجنب مشاكل الـ push
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
       - name: Install Dependencies
         run: |
-          npm install playwright axios
+          npm install
           npx playwright install chromium --with-deps
 
-      - name: Run Script
+      - name: Run Scraper
         run: node scraper.js
 
-      - name: Commit and Push Changes
+      - name: Commit and Push
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          
+          # دمج أي تغييرات خارجية أولاً
+          git pull --rebase origin main
+          
           git add .
-          git commit -m "Update m3u8 links and subtitles" || exit 0
-          git push
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "لا توجد تغييرات جديدة."
+          else
+            git commit -m "تحديث الحلقات والترجمات [skip ci]"
+            git push origin main
+          fi
