@@ -2,8 +2,6 @@ name: HiTV Auto Scraper
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'
 
 permissions:
   contents: write
@@ -21,7 +19,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # تم إزالة الكاش هنا لتجنب الخطأ
 
       - name: Install Dependencies
         run: |
@@ -35,13 +32,11 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          
           git pull --rebase origin main
-          
           git add .
           if git diff --quiet && git diff --staged --quiet; then
-            echo "لا توجد تغييرات جديدة."
+            echo "No changes"
           else
-            git commit -m "تحديث الحلقات والترجمات [skip ci]"
+            git commit -m "Update links [skip ci]"
             git push origin main
           fi
