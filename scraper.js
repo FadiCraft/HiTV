@@ -3,7 +3,6 @@ const fs = require('fs');
 const axios = require('axios');
 const path = require('path');
 
-// وظيفة لتحميل الترجمة بصيغة SRT
 async function downloadSub(url, title, epNum) {
     if (!url) return null;
     try {
@@ -14,130 +13,114 @@ async function downloadSub(url, title, epNum) {
         const filePath = path.join(dir, fileName);
         fs.writeFileSync(filePath, response.data);
         return filePath;
-    } catch (error) { 
-        console.log(`   - Skipping Subtitle: ${error.message}`);
-        return null; 
-    }
+    } catch (error) { return null; }
 }
 
 async function startScraping() {
     const browser = await puppeteer.launch({ 
         headless: "new", 
-        args: [
-            '--no-sandbox', 
-            '--disable-setuid-sandbox', 
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process'
-        ] 
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'] 
     });
 
     const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    // مهم جداً لمحاكاة متصفح حقيقي وتجنب الحظر
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
     const targetUrl = 'https://kisskh.do/Explore?type=2&order=2';
-    console.log(`Step 1: Navigating to Explore page...`);
+    console.log(`🚀 Start: ${targetUrl}`);
     
     try {
-        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-        
-        // استخراج بطاقات الأفلام
+        await page.goto(targetUrl, { waitUntil: 'networkidle2' });
+
         const movies = await page.evaluate(() => {
-            const cards = Array.from(document.querySelectorAll('app-main-card'));
-            return cards.map(card => {
-                const titleEl = card.querySelector('.mat-card-title');
-                const imgEl = card.querySelector('img');
-                const route = card.getAttribute('route');
-                return {
-                    title: titleEl ? titleEl.innerText.trim() : 'No Title',
-                    url: route ? (window.location.origin + route) : null,
-                    image: imgEl ? (imgEl.getAttribute('data-src') || imgEl.src) : ''
-                };
-            }).filter(m => m.url !== null);
+            return Array.from(document.querySelectorAll('app-main-card')).map(card => ({
+                title: card.querySelector('.mat-card-title')?.innerText.trim(),
+                url: window.location.origin + card.getAttribute('route')
+            })).filter(m => m.title && m.url.includes('/Drama'));
         });
 
-        console.log(`Step 2: Found ${movies.length} items to process.`);
+        console.log(`✅ Found ${movies.length} Series.`);
 
         const results = [];
 
         for (let movie of movies) {
-            console.log(`\n--- Processing: ${movie.title} ---`);
-            let movieData = {
-                title: movie.title,
-                image: movie.image,
-                original_url: movie.url,
-                episodes: []
-            };
-
+            console.log(`\n🔍 Checking: ${movie.title}`);
+            
             try {
-                await page.goto(movie.url, { waitUntil: 'networkidle2', timeout: 60000 });
-
-                // الانتظار حتى تظهر أزرار الحلقات (Angular Material)
-                await page.waitForSelector('button.mat-raised-button', { timeout: 20000 }).catch(() => null);
+                // الذهاب لصفحة المسلسل والانتظار حتى يستقر الشبكة
+                await page.goto(movie.url, { waitUntil: 'networkidle0', timeout: 60000 });
+                
+                // انتظار تحميل أزرار الحلقات (تغيير الـ Selector ليكون أكثر شمولاً)
+                await page.waitForFunction(() => {
+                    const btns = Array.from(document.querySelectorAll('button'));
+                    return btns.some(b => b.innerText.includes('1') || b.innerText.includes('2'));
+                }, { timeout: 15000 }).catch(() => console.log("      ⚠️ Timeout waiting for buttons"));
 
                 const episodeList = await page.evaluate(() => {
+                    // البحث عن كل الأزرار التي تحتوي على أرقام فقط (أو رقم مع أيقونة)
                     const buttons = Array.from(document.querySelectorAll('button.mat-raised-button'));
-                    return buttons.map(btn => btn.innerText.replace(/[^0-9]/g, '').trim())
-                                  .filter(txt => txt !== "");
+                    return buttons
+                        .map(btn => btn.innerText.replace(/[^\d]/g, '').trim())
+                        .filter(txt => txt.length > 0 && !isNaN(txt))
+                        .reverse(); // لترتيبها من الحلقة 1 صعوداً
                 });
 
                 if (episodeList.length === 0) {
-                    console.log(`   - No episodes found for this item.`);
+                    console.log(`   ❌ No episodes found. Link might be different.`);
                     continue;
                 }
 
-                console.log(`   - Found ${episodeList.length} episodes. Starting extraction...`);
+                console.log(`   📦 Found ${episodeList.length} episodes.`);
+                
+                let movieData = { title: movie.title, url: movie.url, episodes: [] };
 
                 for (let epNum of episodeList) {
                     let currentM3u8 = "";
                     let currentSub = "";
 
-                    // اعتراض الروابط
                     await page.setRequestInterception(true);
-                    const intercept = (request) => {
+                    const onReq = (request) => {
                         const url = request.url();
                         if (url.includes('.m3u8')) currentM3u8 = url;
                         if (url.includes('.srt')) currentSub = url;
                         request.continue();
                     };
-                    page.on('request', intercept);
+                    page.on('request', onReq);
 
-                    // النقر على الحلقة
+                    // النقر البرمجي الدقيق
                     await page.evaluate((num) => {
-                        const buttons = Array.from(document.querySelectorAll('button.mat-raised-button'));
-                        const target = buttons.find(b => b.innerText.includes(num));
-                        if (target) target.click();
+                        const btns = Array.from(document.querySelectorAll('button.mat-raised-button'));
+                        const target = btns.find(b => b.innerText.trim().startsWith(num) || b.innerText.trim().endsWith(num));
+                        if (target) {
+                            target.scrollIntoView();
+                            target.click();
+                        }
                     }, epNum);
 
-                    // انتظار تحميل المشغل (7 ثوانٍ كافية لالتقاط الروابط)
-                    await new Promise(r => setTimeout(r, 7000));
-
-                    const srtPath = await downloadSub(currentSub, movie.title, epNum);
+                    await new Promise(r => setTimeout(r, 6000)); // انتظار الرابط
 
                     movieData.episodes.push({
-                        episode: epNum,
-                        m3u8: currentM3u8,
-                        subtitle_url: currentSub,
-                        local_subtitle: srtPath || ""
+                        ep: epNum,
+                        video: currentM3u8,
+                        sub: currentSub
                     });
 
                     await page.setRequestInterception(false);
-                    page.removeAllListeners('request');
-                    console.log(`     > Episode ${epNum}: Done`);
+                    page.removeListener('request', onReq);
+                    console.log(`     - Ep ${epNum}: Captured`);
                 }
-
                 results.push(movieData);
+
             } catch (err) {
-                console.log(`   - Error processing ${movie.title}: ${err.message}`);
+                console.log(`   ⚠️ Error: ${err.message}`);
             }
         }
 
-        // حفظ النتائج في ملف JSON
         fs.writeFileSync('movies.json', JSON.stringify(results, null, 2));
-        console.log(`\nSuccess: Data saved to movies.json`);
+        console.log(`\n🎉 Done! Data saved.`);
 
-    } catch (mainErr) {
-        console.log(`Critical Error: ${mainErr.message}`);
+    } catch (e) {
+        console.log(`🔥 Critical: ${e.message}`);
     } finally {
         await browser.close();
     }
