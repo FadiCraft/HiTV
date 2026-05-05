@@ -1,6 +1,7 @@
 {
   "name": "hitv-scraper",
   "version": "1.0.0",
+  "description": "JSON Scraper for HiTV",
   "main": "scraper.js",
   "dependencies": {
     "axios": "^1.6.0",
