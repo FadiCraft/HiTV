@@ -10,12 +10,17 @@ async function startScraping() {
     });
     const page = await context.newPage();
     
+    const dataFilePath = 'data.json';
     if (!fs.existsSync('subtitles')) fs.mkdirSync('subtitles');
 
-    const albumUrl = "https://home.hitv.vip/ar-ae/album/a_8TWpC3uCmdAdOk5YgJqW";
-    let finalJsonData = [];
+    // تهيئة ملف JSON إذا لم يكن موجوداً أو كان فارغاً
+    if (!fs.existsSync(dataFilePath) || fs.readFileSync(dataFilePath).length === 0) {
+        fs.writeFileSync(dataFilePath, JSON.stringify([], null, 2));
+    }
 
-    // مراقبة الشبكة
+    const albumUrl = "https://home.hitv.vip/ar-ae/album/a_8TWpC3uCmdAdOk5YgJqW";
+
+    // مراقبة الشبكة لالتقاط الروابط
     page.on('response', async (res) => {
         const url = res.url();
         if (url.includes('.m3u8')) page.latestM3u8 = url;
@@ -30,48 +35,60 @@ async function startScraping() {
         console.log(`✅ وجدنا ${seriesLinks.length} مسلسل.`);
 
         for (const sLink of seriesLinks) {
-            console.log(`🎬 معالجة: ${sLink}`);
+            console.log(`🎬 جاري معالجة المسلسل: ${sLink}`);
             await page.goto(sLink, { waitUntil: 'domcontentloaded' });
             
-            // محاولة إغلاق أي نافذة منبثقة قد تظهر
+            // محاولة إغلاق النوافذ المنبثقة
             try {
-                await page.waitForSelector('.van-overlay, .dialogContent', { timeout: 5000 });
-                await page.keyboard.press('Escape'); // محاولة إغلاق بالهروب
-                console.log("⚠️ تم محاولة إغلاق نافذة منبثقة.");
+                await page.waitForSelector('.van-overlay, .dialogContent', { timeout: 3000 });
+                await page.keyboard.press('Escape');
             } catch (e) {}
 
             const title = (await page.title()).split('-')[0].trim();
-            let series = { title, url: sLink, episodes: [] };
+            let seriesObject = {
+                title: title,
+                url: sLink,
+                extracted_at: new Date().toISOString(),
+                episodes: []
+            };
 
             const episodes = await page.$$('.play-item');
             for (let i = 0; i < episodes.length; i++) {
-                console.log(`📡 استخراج الحلقة ${i + 1}...`);
+                console.log(`   📡 استخراج الحلقة ${i + 1}...`);
                 page.latestM3u8 = null;
                 page.latestSub = null;
 
-                // استخدام dispatchEvent بدلاً من click العادي لتجنب intercept
                 await episodes[i].dispatchEvent('click');
-                
-                // انتظار بسيط لظهور الرابط في الشبكة
-                await page.waitForTimeout(4000);
+                await page.waitForTimeout(4000); // انتظار تحميل الروابط من الشبكة
 
-                series.episodes.push({
+                seriesObject.episodes.push({
                     episode: i + 1,
                     m3u8: page.latestM3u8 || "N/A",
                     subtitle: page.latestSub || "N/A"
                 });
             }
-            finalJsonData.push(series);
-            
-            // حفظ تدريجي لضمان عدم ضياع البيانات إذا حدث خطأ
-            fs.writeFileSync('data.json', JSON.stringify(finalJsonData, null, 2));
+
+            // --- الجزء الخاص بالحفظ الفوري للمسلسل الحالي ---
+            try {
+                // 1. قراءة البيانات الحالية من الملف
+                const currentFileContent = fs.readFileSync(dataFilePath, 'utf-8');
+                let currentArray = JSON.parse(currentFileContent);
+                
+                // 2. إضافة المسلسل الجديد للمصفوفة
+                currentArray.push(seriesObject);
+                
+                // 3. إعادة كتابة الملف بالكامل بالبيانات المحدثة
+                fs.writeFileSync(dataFilePath, JSON.stringify(currentArray, null, 2));
+                console.log(`💾 تم حفظ بيانات المسلسل "${title}" في الملف مباشرة.`);
+            } catch (saveError) {
+                console.error(`❌ فشل الحفظ الفوري للمسلسل: ${title}`, saveError);
+            }
         }
 
-        console.log("💾 تم الانتهاء بنجاح وحفظ data.json.");
+        console.log("✨ انتهت عملية الاستخراج والحفظ لجميع المسلسلات.");
 
     } catch (err) {
-        console.error("❌ خطأ أثناء التشغيل:", err.message);
-        if (!fs.existsSync('data.json')) fs.writeFileSync('data.json', '[]');
+        console.error("❌ خطأ عام أثناء التشغيل:", err.message);
     } finally {
         await browser.close();
     }
