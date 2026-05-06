@@ -34,7 +34,7 @@ async function startScraping() {
     // 1. تصفير الملف في بداية كل تشغيل (تحديث جديد)
     fs.writeFileSync(dataFilePath, JSON.stringify([], null, 2));
 
-    const albumUrl = "https://home.hitv.vip/ar-ae/album/a_8TWpC3uCmdAdOk5YgJqW";
+    const albumUrl = "https://home.hitv.vip/ar-ae/album/a_MT4IPBbd_619kbg8HYh1g";
 
     // مراقبة الشبكة
     page.on('response', async (res) => {
