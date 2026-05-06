@@ -18,7 +18,7 @@ async function startScraping() {
         fs.writeFileSync(dataFilePath, JSON.stringify([], null, 2));
     }
 
-    const albumUrl = "https://home.hitv.vip/ar-ae/album/a_8TWpC3uCmdAdOk5YgJqW";
+    const albumUrl = "https://home.hitv.vip/ar-ae/album/a_MT4IPBbd_619kbg8HYh1g";
 
     // مراقبة الشبكة لالتقاط الروابط
     page.on('response', async (res) => {
