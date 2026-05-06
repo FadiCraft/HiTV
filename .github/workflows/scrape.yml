@@ -33,14 +33,20 @@ jobs:
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
           
+          # 1. إضافة التغييرات أولاً (لجعل الـ working directory نظيفاً)
+          git add -A
+          
+          # 2. التحقق من وجود تغييرات فعلاً
+          if git diff --staged --quiet; then
+            echo "لا توجد تغييرات جديدة للمزامنة."
+            exit 0
+          fi
+          
+          # 3. حفظ التغييرات محلياً قبل جلب التحديثات من السيرفر
+          git commit -m "Update data and subtitles [skip ci]"
+          
+          # 4. الآن نقوم بجلب التحديثات ودمجها (لن يحدث خطأ لأن التغييرات أصبحت Commit)
           git pull --rebase origin main
           
-          # نستخدم -A لإضافة كل شيء تم إنشاؤه بدون تسمية ملفات محددة
-          git add -A 
-          
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "لا توجد تغييرات."
-          else
-            git commit -m "Update data and subtitles [skip ci]"
-            git push origin main
-          fi
+          # 5. الرفع النهائي
+          git push origin main
