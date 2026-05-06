@@ -3,10 +3,10 @@ const fs = require('fs');
 const axios = require('axios');
 
 async function startScraping() {
-    // استخدام متصفح مع إعدادات تشبه المستخدم الحقيقي
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        viewport: { width: 1280, height: 720 }
     });
     const page = await context.newPage();
     
@@ -15,6 +15,7 @@ async function startScraping() {
     const albumUrl = "https://home.hitv.vip/ar-ae/album/a_8TWpC3uCmdAdOk5YgJqW";
     let finalJsonData = [];
 
+    // مراقبة الشبكة
     page.on('response', async (res) => {
         const url = res.url();
         if (url.includes('.m3u8')) page.latestM3u8 = url;
@@ -28,22 +29,31 @@ async function startScraping() {
         const seriesLinks = await page.$$eval('.album a', els => els.map(el => el.href));
         console.log(`✅ وجدنا ${seriesLinks.length} مسلسل.`);
 
-        if (seriesLinks.length === 0) {
-            console.log("⚠️ لم يتم العثور على مسلسلات، قد يكون الموقع غير متاح أو هناك حماية.");
-        }
-
         for (const sLink of seriesLinks) {
             console.log(`🎬 معالجة: ${sLink}`);
-            await page.goto(sLink, { waitUntil: 'networkidle' });
+            await page.goto(sLink, { waitUntil: 'domcontentloaded' });
             
+            // محاولة إغلاق أي نافذة منبثقة قد تظهر
+            try {
+                await page.waitForSelector('.van-overlay, .dialogContent', { timeout: 5000 });
+                await page.keyboard.press('Escape'); // محاولة إغلاق بالهروب
+                console.log("⚠️ تم محاولة إغلاق نافذة منبثقة.");
+            } catch (e) {}
+
             const title = (await page.title()).split('-')[0].trim();
             let series = { title, url: sLink, episodes: [] };
 
             const episodes = await page.$$('.play-item');
             for (let i = 0; i < episodes.length; i++) {
+                console.log(`📡 استخراج الحلقة ${i + 1}...`);
                 page.latestM3u8 = null;
-                await episodes[i].click();
-                await page.waitForTimeout(5000);
+                page.latestSub = null;
+
+                // استخدام dispatchEvent بدلاً من click العادي لتجنب intercept
+                await episodes[i].dispatchEvent('click');
+                
+                // انتظار بسيط لظهور الرابط في الشبكة
+                await page.waitForTimeout(4000);
 
                 series.episodes.push({
                     episode: i + 1,
@@ -52,15 +62,15 @@ async function startScraping() {
                 });
             }
             finalJsonData.push(series);
+            
+            // حفظ تدريجي لضمان عدم ضياع البيانات إذا حدث خطأ
+            fs.writeFileSync('data.json', JSON.stringify(finalJsonData, null, 2));
         }
 
-        // حفظ الملف حتى لو كانت المصفوفة فارغة لتجنب خطأ الـ Git
-        fs.writeFileSync('data.json', JSON.stringify(finalJsonData, null, 2));
-        console.log("💾 تم حفظ data.json بنجاح.");
+        console.log("💾 تم الانتهاء بنجاح وحفظ data.json.");
 
     } catch (err) {
         console.error("❌ خطأ أثناء التشغيل:", err.message);
-        // إنشاء ملف فارغ في حال الفشل لتجنب خطأ الرفع
         if (!fs.existsSync('data.json')) fs.writeFileSync('data.json', '[]');
     } finally {
         await browser.close();
